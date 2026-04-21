@@ -30,11 +30,14 @@ jobs:
       - name: JS lint
         run: eslint frontend
 
-      - name: Docker lint
+      - name: Install Hadolint
         run: |
-          sudo apt-get update
-          sudo apt-get install -y hadolint
-          hadolint **/Dockerfile
+            wget -O hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+            chmod +x hadolint
+            sudo mv hadolint /usr/local/bin/hadolint
+
+      - name: Run Docker lint (Hadolint)
+        run: hadolint **/Dockerfile
 
 
   test:
