@@ -11,7 +11,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y curl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+ && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN useradd -m appuser
