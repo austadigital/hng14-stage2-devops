@@ -15,6 +15,8 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 # =========================
 # REDIS CLIENT
 # =========================
+
+
 def get_redis():
     """
     Returns Redis connection.
