@@ -53,8 +53,9 @@ jobs:
           pip install -r api/requirements.txt
           pip install pytest pytest-cov
 
+      # ✅ FIX 1: ensure imports work in CI
       - name: Run tests
-        run: pytest --cov=api --cov-report=xml
+        run: PYTHONPATH=. pytest --cov=api --cov-report=xml
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -78,21 +79,18 @@ jobs:
 
       - name: Build API
         run: |
-          docker build -t localhost:5000/api:${{ github.sha }} api
-          docker tag localhost:5000/api:${{ github.sha }} localhost:5000/api:latest
-
-      - name: Push API
-        run: docker push localhost:5000/api:${{ github.sha }}
+          docker build -t api:${{ github.sha }} api
+          docker tag api:${{ github.sha }} api:latest
 
       - name: Build frontend
         run: |
-          docker build -t localhost:5000/frontend:${{ github.sha }} frontend
-          docker push localhost:5000/frontend:${{ github.sha }}
+          docker build -t frontend:${{ github.sha }} frontend
+          docker tag frontend:${{ github.sha }} frontend:latest
 
       - name: Build worker
         run: |
-          docker build -t localhost:5000/worker:${{ github.sha }} worker
-          docker push localhost:5000/worker:${{ github.sha }}
+          docker build -t worker:${{ github.sha }} worker
+          docker tag worker:${{ github.sha }} worker:latest
 
 
   security:
@@ -100,6 +98,8 @@ jobs:
     needs: build
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install Trivy
         run: |
           sudo apt-get update
@@ -107,9 +107,10 @@ jobs:
           wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.48.0_Linux-64bit.deb
           sudo dpkg -i trivy_0.48.0_Linux-64bit.deb
 
-      - name: Scan images
+      # ✅ FIX 2: scan local image (not registry)
+      - name: Scan API image
         run: |
-          trivy image localhost:5000/api:${{ github.sha }} --exit-code 1 --severity CRITICAL --format sarif > trivy.sarif
+          trivy image api:${{ github.sha }} --exit-code 1 --severity CRITICAL --format sarif > trivy.sarif
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
@@ -124,8 +125,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Start stack
         run: docker-compose up -d
+
+      # ✅ FIX 3: give containers time to start
+      - name: Wait for services
+        run: sleep 10
 
       - name: Run integration test
         run: python tests/integration_test.py
@@ -143,13 +153,12 @@ jobs:
     steps:
       - name: Deploy new version
         run: |
-          docker pull localhost:5000/api:${{ github.sha }}
           docker stop api_old || true
           docker rename api api_old || true
 
           docker run -d --name api_new \
             -p 8000:8000 \
-            localhost:5000/api:${{ github.sha }}
+            api:${{ github.sha }}
 
       - name: Health check
         run: |

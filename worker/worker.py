@@ -46,4 +46,3 @@ while True:
         # ✅ FIX: prevent worker crash loop
         print(f"Worker error: {e}")
         time.sleep(2)
-
