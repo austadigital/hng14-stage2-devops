@@ -97,29 +97,30 @@ jobs:
 
 
   security:
-    runs-on: ubuntu-latest
-    needs: build
+  runs-on: ubuntu-latest
+  needs: build
 
-    steps:
-      - uses: actions/checkout@v4
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: Install Trivy
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget
-          wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.48.0_Linux-64bit.deb
-          sudo dpkg -i trivy_0.48.0_Linux-64bit.deb
+    - name: Install Trivy
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget
 
-      # ✅ FIX 2: scan local image (not registry)
-      - name: Scan API image
-        run: |
-          trivy image api:${{ github.sha }} --exit-code 1 --severity CRITICAL --format sarif > trivy.sarif
+        wget -qO- https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh
 
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy.sarif
+    - name: Scan API image
+      run: |
+        trivy image api:${{ github.sha }} \
+          --exit-code 1 \
+          --severity CRITICAL,HIGH \
+          --format sarif > trivy.sarif
 
+    - name: Upload SARIF
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy.sarif
 
   integration:
     runs-on: ubuntu-latest
