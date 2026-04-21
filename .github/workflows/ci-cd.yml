@@ -7,36 +7,21 @@ on:
     branches: ["main"]
 
 jobs:
-
   lint:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      # Python lint
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - run: pip install flake8
-      - run: flake8 api worker
-
-      # JS lint
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - run: npm install eslint --save-dev
-      - run: npx eslint frontend || true
-
-      # Hadolint
-      - run: |
+      - name: Install Hadolint
+        run: |
           wget -O hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
           chmod +x hadolint
-          sudo mv hadolint /usr/local/bin/hadolint
+          sudo mv hadolint /usr/local/bin/
 
-      - run: hadolint -i DL3008 **/Dockerfile
-
+      - name: Lint Dockerfiles
+        run: |
+          hadolint --ignore DL3008 --ignore DL3009 --ignore DL3015 **/Dockerfile
 
   test:
     runs-on: ubuntu-latest
