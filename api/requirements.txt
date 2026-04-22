@@ -4,3 +4,4 @@ redis
 httpx
 pytest
 pytest-cov
+flake8
