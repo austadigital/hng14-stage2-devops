@@ -6,13 +6,46 @@ on:
   pull_request:
     branches: ["main"]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
+
+# =========================
+# 1. LINT
+# =========================
   lint:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
+      # Python lint
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python lint tools
+        run: pip install flake8
+
+      - name: Python lint
+        run: flake8 .
+
+      # JavaScript lint
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install ESLint
+        run: npm install eslint
+
+      - name: JS lint
+        run: npx eslint .
+
+      # Docker lint
       - name: Install Hadolint
         run: |
           wget -O hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
@@ -20,45 +53,82 @@ jobs:
           sudo mv hadolint /usr/local/bin/
 
       - name: Lint Dockerfiles
-        run: |
-          hadolint --ignore DL3008 --ignore DL3009 --ignore DL3015 **/Dockerfile
+        run: hadolint **/Dockerfile
 
+
+# =========================
+# 2. TEST
+# =========================
   test:
     runs-on: ubuntu-latest
     needs: lint
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - run: |
+      - name: Install dependencies
+        run: |
           pip install -r api/requirements.txt
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov redis
 
-      - run: PYTHONPATH=. pytest --cov=api --cov-report=xml
+      - name: Run tests with coverage
+        run: pytest --cov=api --cov-report=xml
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
 
 
+# =========================
+# 3. BUILD + PUSH
+# =========================
   build:
     runs-on: ubuntu-latest
     needs: test
+
     steps:
       - uses: actions/checkout@v4
 
-      - run: docker build -t api:${{ github.sha }} api
-      - run: docker build -t frontend:${{ github.sha }} frontend
-      - run: docker build -t worker:${{ github.sha }} worker
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build images
+        run: |
+          docker build -t $REGISTRY/$IMAGE_NAME/api:${{ github.sha }} api
+          docker build -t $REGISTRY/$IMAGE_NAME/frontend:${{ github.sha }} frontend
+          docker build -t $REGISTRY/$IMAGE_NAME/worker:${{ github.sha }} worker
+
+          docker tag $REGISTRY/$IMAGE_NAME/api:${{ github.sha }} $REGISTRY/$IMAGE_NAME/api:latest
+          docker tag $REGISTRY/$IMAGE_NAME/frontend:${{ github.sha }} $REGISTRY/$IMAGE_NAME/frontend:latest
+          docker tag $REGISTRY/$IMAGE_NAME/worker:${{ github.sha }} $REGISTRY/$IMAGE_NAME/worker:latest
+
+      - name: Push images
+        run: |
+          docker push $REGISTRY/$IMAGE_NAME/api:${{ github.sha }}
+          docker push $REGISTRY/$IMAGE_NAME/frontend:${{ github.sha }}
+          docker push $REGISTRY/$IMAGE_NAME/worker:${{ github.sha }}
+
+          docker push $REGISTRY/$IMAGE_NAME/api:latest
+          docker push $REGISTRY/$IMAGE_NAME/frontend:latest
+          docker push $REGISTRY/$IMAGE_NAME/worker:latest
 
 
+# =========================
+# 4. SECURITY SCAN
+# =========================
   security:
     runs-on: ubuntu-latest
+    needs: build
 
     steps:
       - uses: actions/checkout@v4
-    
-      - name: Build API image
-        run: docker build -t api:${{ github.sha }} api
 
       - name: Install Trivy
         run: |
@@ -69,28 +139,192 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y trivy
 
-      - name: Scan API image
+      - name: Scan all images (FAIL on CRITICAL)
         run: |
-          trivy image api:${{ github.sha }} \
-            --exit-code 0 \
-            --severity CRITICAL,HIGH \
-            --format sarif > trivy.sarif
+          trivy image --exit-code 1 --severity CRITICAL $REGISTRY/$IMAGE_NAME/api:${{ github.sha }}
+          trivy image --exit-code 1 --severity CRITICAL $REGISTRY/$IMAGE_NAME/frontend:${{ github.sha }}
+          trivy image --exit-code 1 --severity CRITICAL $REGISTRY/$IMAGE_NAME/worker:${{ github.sha }}
 
+
+# =========================
+# 5. INTEGRATION TEST
+# =========================
   integration:
     runs-on: ubuntu-latest
     needs: security
+
     steps:
       - uses: actions/checkout@v4
 
-      - run: docker compose up -d
-      - run: sleep 10
-      - run: python tests/integration_test.py
-      - run: docker compose down
+      - name: Start full stack
+        run: docker compose up -d
+
+      - name: Wait for services
+        run: sleep 15
+
+      - name: Run integration test
+        run: pytest api/tests
+
+      - name: Tear down
+        if: always()
+        run: docker compose down
 
 
+# =========================
+# 6. DEPLOY (ROLLING UPDATE)
+# =========================
   deploy:
     runs-on: ubuntu-latest
     needs: integration
     if: github.ref == 'refs/heads/main'
+
     steps:
-      - run: echo "Deploy step placeholder"
+      - name: Deploy new version
+        run: |
+          echo "Pull new images"
+          docker pull $REGISTRY/$IMAGE_NAME/api:latest
+
+          echo "Start new container"
+          docker run -d --name api-new -p 80:8000 $REGISTRY/$IMAGE_NAME/api:latest
+
+          echo "Health check"
+          for i in {1..12}; do
+            curl -f http://localhost:80/health && break
+            sleep 5
+          done
+
+          echo "Swap containers"
+          docker stop api-old || true
+          docker rm api-old || true
+          docker rename api-new api-old
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# name: CI/CD Pipeline
+
+# on:
+#   push:
+#     branches: ["main"]
+#   pull_request:
+#     branches: ["main"]
+
+# jobs:
+#   lint:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Install Hadolint
+#         run: |
+#           wget -O hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+#           chmod +x hadolint
+#           sudo mv hadolint /usr/local/bin/
+
+#       - name: Lint Dockerfiles
+#         run: |
+#           hadolint --ignore DL3008 --ignore DL3009 --ignore DL3015 **/Dockerfile
+
+#   test:
+#     runs-on: ubuntu-latest
+#     needs: lint
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.11"
+
+#       - run: |
+#           pip install -r api/requirements.txt
+#           pip install pytest pytest-cov
+
+#       - run: PYTHONPATH=. pytest --cov=api --cov-report=xml
+
+
+#   build:
+#     runs-on: ubuntu-latest
+#     needs: test
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - run: docker build -t api:${{ github.sha }} api
+#       - run: docker build -t frontend:${{ github.sha }} frontend
+#       - run: docker build -t worker:${{ github.sha }} worker
+
+
+#   security:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - uses: actions/checkout@v4
+    
+#       - name: Build API image
+#         run: docker build -t api:${{ github.sha }} api
+
+#       - name: Install Trivy
+#         run: |
+#           sudo apt-get update
+#           sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+#           wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+#           echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+#           sudo apt-get update
+#           sudo apt-get install -y trivy
+
+#       - name: Scan API image
+#         run: |
+#           trivy image api:${{ github.sha }} \
+#             --exit-code 0 \
+#             --severity CRITICAL,HIGH \
+#             --format sarif > trivy.sarif
+
+#   integration:
+#     runs-on: ubuntu-latest
+#     needs: security
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - run: docker compose up -d
+#       - run: sleep 10
+#       - run: python tests/integration_test.py
+#       - run: docker compose down
+
+
+#   deploy:
+#     runs-on: ubuntu-latest
+#     needs: integration
+#     if: github.ref == 'refs/heads/main'
+#     steps:
+#       - run: echo "Deploy step placeholder"
