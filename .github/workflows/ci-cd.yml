@@ -39,10 +39,10 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install ESLint
-        run: npm install eslint
+      - name:  Install dependencies
+        run: npm install 
 
-      - name: JS lint
+      - name: Run ESlint
         run: npx eslint .
 
       # Docker lint
