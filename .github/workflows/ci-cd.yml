@@ -38,6 +38,8 @@ jobs:
 
       - name: Run tests
         run: pytest api/tests
+        env:
+          PYTHONPATH: .
 
       - name: Install Python lint tools
         run: pip install flake8
