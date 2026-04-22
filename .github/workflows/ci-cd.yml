@@ -82,7 +82,7 @@ jobs:
           python -m pip install -r api/requirements.txt
 
       - name: Run tests with coverage
-        run: pytest --cov=api --cov-report=xml
+        run: python -m pytest --cov=api --cov-report=xml
         env:
           PYTHONPATH: .
 
