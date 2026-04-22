@@ -173,8 +173,10 @@ jobs:
         run: sleep 15
 
       - name: Run integration test
-        run: pytest api/tests
-
+        run: python -m pytest api/tests
+        env:
+          PYTHONPATH: .
+          
       - name: Tear down
         if: always()
         run: docker compose down
